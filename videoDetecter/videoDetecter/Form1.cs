@@ -104,7 +104,6 @@ namespace videoDetecter
                     grayscaleImage.SetPixel(x, y, grayscalePixel);
                 }
             }
-
             return grayscaleImage;
         }
 
@@ -144,7 +143,7 @@ namespace videoDetecter
             if (capture != null && capture.Ptr != IntPtr.Zero)
             {
                 Mat m = new Mat();
-                capture.Read(m);
+                //capture.Read(m);
 
                 if (!m.IsEmpty)
                 {
@@ -161,7 +160,6 @@ namespace videoDetecter
 
                         Bitmap processedImage = ApplyMorphologicalOperations(diffImage);
 
-                        pictureBox2.Image = processedImage;
                         // Track motion on the difference image
                         DrawMovingObjectContours(processedImage, currentFrame);
                         // Dispose the previous frame
