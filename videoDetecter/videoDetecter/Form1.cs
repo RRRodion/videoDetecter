@@ -1,7 +1,9 @@
 ﻿using Emgu.CV;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
+using System.Threading;
 using System.Windows.Forms;
 
 namespace videoDetecter
@@ -14,13 +16,20 @@ namespace videoDetecter
         private double fps;
         private bool play = false;
         private Bitmap previousFrame;
+        private Bitmap currentFrame;
+        private Bitmap processFrame;
+        private Graphics graphics;
 
         public Form1()
         {
             InitializeComponent();
-            timer1 = new Timer();
+            timer1 = new System.Windows.Forms.Timer();
             timer1.Interval = 15; // Set the timer interval based on the video frame rate
             timer1.Tick += ProcessFrame;
+            previousFrame = null;
+            currentFrame = null;
+            processFrame = null;
+            graphics = pictureBox1.CreateGraphics();
         }
 
         private void openToolStripMenuItem_Click(object sender, EventArgs e)
@@ -49,9 +58,9 @@ namespace videoDetecter
             }
         }
 
-        private Bitmap ConvertToGrayscale(Bitmap image)
+        private void ConvertToGrayscale()
         {
-            Bitmap grayscaleImage = new Bitmap(image.Width, image.Height);
+            //Bitmap grayscaleImage = new Bitmap(image.Width, image.Height);
 
             // Gaussian kernel
             int[,] kernel = new int[,]
@@ -65,9 +74,9 @@ namespace videoDetecter
             int kernelWeight = 16;
 
             // Convolution operation
-            for (int y = 0; y < image.Height; y++)
+            for (int y = 0; y < processFrame.Height; y++)
             {
-                for (int x = 0; x < image.Width; x++)
+                for (int x = 0; x < processFrame.Width; x++)
                 {
                     int rTotal = 0, gTotal = 0, bTotal = 0;
                     int pixelCount = 0;
@@ -81,9 +90,9 @@ namespace videoDetecter
                             int offsetY = y + i;
 
                             // Check if the pixel is within the image boundaries
-                            if (offsetX >= 0 && offsetX < image.Width && offsetY >= 0 && offsetY < image.Height)
+                            if (offsetX >= 0 && offsetX < processFrame.Width && offsetY >= 0 && offsetY < processFrame.Height)
                             {
-                                Color pixel = image.GetPixel(offsetX, offsetY);
+                                Color pixel = processFrame.GetPixel(offsetX, offsetY);
 
                                 // Apply the kernel to each channel (R, G, B)
                                 rTotal += pixel.R * kernel[i + kernelSize / 2, j + kernelSize / 2];
@@ -101,21 +110,20 @@ namespace videoDetecter
                     int averageB = bTotal / kernelWeight;
 
                     Color grayscalePixel = Color.FromArgb(averageR, averageG, averageB);
-                    grayscaleImage.SetPixel(x, y, grayscalePixel);
+                    processFrame.SetPixel(x, y, grayscalePixel);
                 }
             }
-            return grayscaleImage;
         }
 
-        private Bitmap ComputeFrameDifference(Bitmap currentFrame, Bitmap previousFrame)
+        private void ComputeFrameDifference()
         {
-            Bitmap diffImage = new Bitmap(currentFrame.Width, currentFrame.Height);
+            //Bitmap diffImage = new Bitmap(currentFrame.Width, currentFrame.Height);
 
-            for (int y = 0; y < currentFrame.Height; y++)
+            for (int y = 0; y < processFrame.Height; y++)
             {
-                for (int x = 0; x < currentFrame.Width; x++)
+                for (int x = 0; x < processFrame.Width; x++)
                 {
-                    Color currentPixel = currentFrame.GetPixel(x, y);
+                    Color currentPixel = processFrame.GetPixel(x, y);
                     Color previousPixel = previousFrame.GetPixel(x, y);
 
                     int diffR = Math.Abs(currentPixel.R - previousPixel.R);
@@ -126,48 +134,54 @@ namespace videoDetecter
 
                     if (diffTotal > 3)
                     {
-                        diffImage.SetPixel(x, y, Color.White);
+                        processFrame.SetPixel(x, y, Color.White);
                     }
                     else
                     {
-                        diffImage.SetPixel(x, y, Color.Black);
+                        processFrame.SetPixel(x, y, Color.Black);
                     }
                 }
             }
-
-            return diffImage;
         }
 
         private void ProcessFrame(object sender, EventArgs e)
         {
+            var stopwatch = new Stopwatch();
+            stopwatch.Start();
+
             if (capture != null && capture.Ptr != IntPtr.Zero)
             {
                 Mat m = new Mat();
-                //capture.Read(m);
+                capture.Read(m);
 
                 if (!m.IsEmpty)
                 {
-                    // Convert current frame to bitmap
-                    Bitmap currentFrame = m.Bitmap;
+                    currentFrame = m.Bitmap;
+                    processFrame = m.Bitmap;
 
-                    // Convert current frame to grayscale
-                    Bitmap grayscaleImage = ConvertToGrayscale(currentFrame);
+                    ConvertToGrayscale();
 
-                    if (previousFrame != null)
+                    if (previousFrame == null)
                     {
-                        // Compute frame difference
-                        Bitmap diffImage = ComputeFrameDifference(grayscaleImage, previousFrame);
+                        previousFrame = (Bitmap)processFrame.Clone();
+                    }
+                    else
+                    {
+                        var temp = (Bitmap)processFrame.Clone();
+                        ComputeFrameDifference();
 
-                        Bitmap processedImage = ApplyMorphologicalOperations(diffImage);
+                        Bitmap processedImage = ApplyMorphologicalOperations(processFrame);
 
                         // Track motion on the difference image
-                        DrawMovingObjectContours(processedImage, currentFrame);
+                        DrawMovingObjectContours(processedImage);
                         // Dispose the previous frame
                         previousFrame.Dispose();
+                        previousFrame = (Bitmap)temp.Clone();
+                        temp.Dispose();
                     }
 
                     // Update previous frame
-                    previousFrame = grayscaleImage;
+                    //previousFrame = grayscaleImage;
 
                     // Display the current frame
                     pictureBox1.Image = currentFrame;
@@ -194,6 +208,9 @@ namespace videoDetecter
                     MessageBox.Show("Video processing interrupted.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
+
+            Debug.WriteLine(stopwatch.ElapsedMilliseconds);
+            stopwatch.Stop();
         }
 
         private void toolStripButton1_Click(object sender, EventArgs e)
@@ -343,7 +360,7 @@ namespace videoDetecter
             return binaryImage;
         }
 
-        private void DrawMovingObjectContours(Bitmap diffImage, Bitmap currentFrame)
+        private void DrawMovingObjectContours(Bitmap diffImage)
         {
             Graphics g = Graphics.FromImage(currentFrame);
             Pen redPen = new Pen(Color.Red, 2);
@@ -363,7 +380,8 @@ namespace videoDetecter
                     g.DrawRectangle(redPen, rect);
                 }
             }
-
+            //pictureBox1.Update();
+            //Thread.Sleep(1000);
             //g.Dispose();
             redPen.Dispose();
         }
