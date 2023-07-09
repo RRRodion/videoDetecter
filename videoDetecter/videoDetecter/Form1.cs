@@ -5,7 +5,6 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace videoDetecter
@@ -37,6 +36,7 @@ namespace videoDetecter
             try
             {
                 DialogResult res = openFileDialog1.ShowDialog();
+
                 if (res == DialogResult.OK)
                 {
                     capture = new VideoCapture(openFileDialog1.FileName);
@@ -57,139 +57,85 @@ namespace videoDetecter
             }
         }
 
-        private void ConvertToGrayscale()
+        private void ConvertToGray()
         {
-            var stopwatch = new Stopwatch();
-            stopwatch.Start();
-
-            Bitmap grayscaleImage = new Bitmap(processFrame.Width, processFrame.Height);
-
-            int[,] kernel = new int[,]
-            {
-        { 1, 2, 1 },
-        { 2, 4, 2 },
-        { 1, 2, 1 }
-            };
-
-            int kernelSize = 3;
-            int kernelWeight = 16;
-
-
-            // Вычислить сумму всех элементов ядра заранее
-            int kernelSum = 0;
-            for (int i = 0; i < kernelSize; i++)
-            {
-                for (int j = 0; j < kernelSize; j++)
-                {
-                    kernelSum += kernel[i, j];
-                }
-            }
-
-            BitmapData processFrameData = processFrame.LockBits(new Rectangle(0, 0, processFrame.Width, processFrame.Height), ImageLockMode.ReadOnly, processFrame.PixelFormat);
-            BitmapData grayscaleImageData = grayscaleImage.LockBits(new Rectangle(0, 0, grayscaleImage.Width, grayscaleImage.Height), ImageLockMode.WriteOnly, grayscaleImage.PixelFormat);
-
-            try
-            {
-                int bytesPerPixel = Bitmap.GetPixelFormatSize(processFrame.PixelFormat) / 8;
-
-                unsafe
-                {
-                    byte* processFramePtr = (byte*)processFrameData.Scan0;
-                    byte* grayscaleImagePtr = (byte*)grayscaleImageData.Scan0;
-
-                    for (int y = 0; y < processFrame.Height; y++)
-                    {
-                        for (int x = 0; x < processFrame.Width; x++)
-                        {
-                            int rTotal = 0, gTotal = 0, bTotal = 0;
-                            int pixelCount = 0;
-
-                            for (int i = -kernelSize / 2; i <= kernelSize / 2; i++)
-                            {
-                                int offsetY = y + i;
-
-                                if (offsetY >= 0 && offsetY < processFrame.Height)
-                                {
-                                    for (int j = -kernelSize / 2; j <= kernelSize / 2; j++)
-                                    {
-                                        int offsetX = x + j;
-
-                                        if (offsetX >= 0 && offsetX < processFrame.Width)
-                                        {
-                                            byte* pixelPtr = processFramePtr + offsetY * processFrameData.Stride + offsetX * bytesPerPixel;
-
-                                            byte b = pixelPtr[0];
-                                            byte g = pixelPtr[1];
-                                            byte r = pixelPtr[2];
-
-                                            rTotal += r * kernel[i + kernelSize / 2, j + kernelSize / 2];
-                                            gTotal += g * kernel[i + kernelSize / 2, j + kernelSize / 2];
-                                            bTotal += b * kernel[i + kernelSize / 2, j + kernelSize / 2];
-
-                                            pixelCount++;
-                                        }
-                                    }
-                                }
-                            }
-
-                            byte* grayscalePixelPtr = grayscaleImagePtr + y * grayscaleImageData.Stride + x * bytesPerPixel;
-
-                            grayscalePixelPtr[0] = (byte)(bTotal / kernelSum);
-                            grayscalePixelPtr[1] = (byte)(gTotal / kernelSum);
-                            grayscalePixelPtr[2] = (byte)(rTotal / kernelSum);
-                            if (bytesPerPixel == 4)
-                            {
-                                grayscalePixelPtr[3] = 255;
-                            }
-                        }
-                    }
-                }
-            }
-            finally
-            {
-                processFrame.UnlockBits(processFrameData);
-                grayscaleImage.UnlockBits(grayscaleImageData);
-            }
-
-            processFrame = (Bitmap)grayscaleImage.Clone();
-            grayscaleImage.Dispose();
-
-            Debug.WriteLine("Grayscale - " + stopwatch.ElapsedMilliseconds);
-            stopwatch.Stop();
-        }
-
-
-        private void ComputeFrameDifference()
-        {
-            var stopwatch = new Stopwatch();
-            stopwatch.Start();
-
             for (int y = 0; y < processFrame.Height; y++)
             {
                 for (int x = 0; x < processFrame.Width; x++)
                 {
-                    Color currentPixel = processFrame.GetPixel(x, y);
-                    Color previousPixel = previousFrame.GetPixel(x, y);
-
-                    int diffR = Math.Abs(currentPixel.R - previousPixel.R);
-                    int diffG = Math.Abs(currentPixel.G - previousPixel.G);
-                    int diffB = Math.Abs(currentPixel.B - previousPixel.B);
-
-                    int diffTotal = (diffR + diffG + diffB) / 3;
-
-                    if (diffTotal > 2)
-                    {
-                        processFrame.SetPixel(x, y, Color.White);
-                    }
-                    else
-                    {
-                        processFrame.SetPixel(x, y, Color.Black);
-                    }
+                    Color color = processFrame.GetPixel(x, y);
+                    int grayValue = (int)(color.R * 0.299 + color.G * 0.587 + color.B * 0.114);
+                    Color grayColor = Color.FromArgb(grayValue, grayValue, grayValue);
+                    processFrame.SetPixel(x, y, grayColor);
                 }
             }
-            Debug.WriteLine("FrameDiff - " + stopwatch.ElapsedMilliseconds);
-            stopwatch.Stop();
         }
+
+        private void ComputeFrameDifference()
+        {
+            Rectangle rect = new Rectangle(0, 0, processFrame.Width, processFrame.Height);
+            BitmapData processFrameData = processFrame.LockBits(rect, ImageLockMode.ReadWrite, processFrame.PixelFormat);
+            BitmapData previousFrameData = previousFrame.LockBits(rect, ImageLockMode.ReadOnly, previousFrame.PixelFormat);
+
+            try
+            {
+                IntPtr processFramePtr = processFrameData.Scan0;
+                IntPtr previousFramePtr = previousFrameData.Scan0;
+                int bytesPerPixel = Image.GetPixelFormatSize(processFrame.PixelFormat) / 8;
+                int stride = processFrameData.Stride;
+
+                int width = processFrameData.Width;
+                int height = processFrameData.Height;
+
+                int processFrameBytes = stride * height;
+                int previousFrameBytes = stride * height;
+                byte[] processFrameBuffer = new byte[processFrameBytes];
+                byte[] previousFrameBuffer = new byte[previousFrameBytes];
+
+                Marshal.Copy(processFramePtr, processFrameBuffer, 0, processFrameBytes);
+                Marshal.Copy(previousFramePtr, previousFrameBuffer, 0, previousFrameBytes);
+
+                for (int y = 0; y < height; y++)
+                {
+                    int currentLine = y * stride;
+                    int processFrameOffset = currentLine;
+                    int previousFrameOffset = currentLine;
+
+                    for (int x = 0; x < width; x++)
+                    {
+                        int processFrameIndex = processFrameOffset + x * bytesPerPixel;
+                        int previousFrameIndex = previousFrameOffset + x * bytesPerPixel;
+
+                        byte currentR = processFrameBuffer[processFrameIndex + 2];
+                        byte currentG = processFrameBuffer[processFrameIndex + 1];
+                        byte currentB = processFrameBuffer[processFrameIndex];
+
+                        byte previousR = previousFrameBuffer[previousFrameIndex + 2];
+                        byte previousG = previousFrameBuffer[previousFrameIndex + 1];
+                        byte previousB = previousFrameBuffer[previousFrameIndex];
+
+                        int diffR = Math.Abs(currentR - previousR);
+                        int diffG = Math.Abs(currentG - previousG);
+                        int diffB = Math.Abs(currentB - previousB);
+                        int diffTotal = (diffR + diffG + diffB) / 3;
+
+                        byte newColor = (diffTotal > 2) ? (byte)255 : (byte)0;
+                        processFrameBuffer[processFrameIndex] = newColor;
+                        processFrameBuffer[processFrameIndex + 1] = newColor;
+                        processFrameBuffer[processFrameIndex + 2] = newColor;
+                    }
+                }
+
+                Marshal.Copy(processFrameBuffer, 0, processFramePtr, processFrameBytes);
+            }
+            finally
+            {
+                processFrame.UnlockBits(processFrameData);
+                previousFrame.UnlockBits(previousFrameData);
+            }
+        }
+
+
         private void ProcessFrame(object sender, EventArgs e)
         {
             var stopwatch = new Stopwatch();
@@ -204,11 +150,9 @@ namespace videoDetecter
                 {
                     currentFrame = m.Bitmap;
                     processFrame = m.Bitmap;
-
                     currentFrame = ScaleBitmap(currentFrame);
                     processFrame = (Bitmap)currentFrame.Clone();
-
-                    ConvertToGrayscale();
+                    ConvertToGray();
 
                     if (previousFrame == null)
                     {
@@ -217,13 +161,9 @@ namespace videoDetecter
                     else
                     {
                         Bitmap temp = (Bitmap)processFrame.Clone();
-
                         ComputeFrameDifference();
-
                         ApplyMorphologicalOperations();
-
                         DrawMovingObjectContours(processFrame);
-
                         previousFrame.Dispose();
                         previousFrame = (Bitmap)temp.Clone();
                         temp.Dispose();
@@ -231,15 +171,12 @@ namespace videoDetecter
 
                     pictureBox1.Image = currentFrame;
                     //pictureBox1.Image = processFrame; ///// Вывод ч/б кадра
-
                     framesCounter++;
 
                     if (framesCounter > frames)
                     {
                         timer1.Stop();
-
                         capture.Dispose();
-
                         MessageBox.Show("Video processing completed.", "Information", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     }
                 }
@@ -254,8 +191,6 @@ namespace videoDetecter
             Debug.WriteLine(stopwatch.ElapsedMilliseconds);
             stopwatch.Stop();
         }
-
-
 
         private void toolStripButton1_Click(object sender, EventArgs e)
         {
@@ -275,93 +210,63 @@ namespace videoDetecter
                 }
             }
             else
-            {
                 MessageBox.Show("No video loaded!", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
         }
 
         private void Form1_FormClosing(object sender, FormClosingEventArgs e)
         {
             if (capture != null)
-            {
                 capture.Dispose();
-            }
         }
 
         private void ApplyMorphologicalOperations()
         {
-            var stopwatch = new Stopwatch();
-            stopwatch.Start();
-
-            // Применение операции морфологического закрытия для заполнения областей объекта
             CloseOperation();
-
-            // Применение операции морфологического открытия для удаления шумов и небольших объектов
             OpenOperation();
-
             ConvertToBinary();
-
-            Debug.WriteLine("Morphological Operations - " + stopwatch.ElapsedMilliseconds);
-            stopwatch.Stop();
         }
 
         private void CloseOperation()
         {
-            // Создание структурирующего элемента для операции закрытия
             int[,] structuringElement = new int[,]
             {
-        { 1, 1, 1 },
-        { 1, 1, 1 },
-        { 1, 1, 1 }
+                { 1, 1, 1 },
+                { 1, 1, 1 },
+                { 1, 1, 1 }
             };
 
-            // Применение операции дилатации
             Dilation(structuringElement);
-
-            // Применение операции эрозии
             Erosion(structuringElement);
         }
 
         private void OpenOperation()
         {
-            // Создание структурирующего элемента для операции открытия
             int[,] structuringElement = new int[,]
             {
-        { 1, 1, 1 },
-        { 1, 1, 1 },
-        { 1, 1, 1 }
+                { 1, 1, 1 },
+                { 1, 1, 1 },
+                { 1, 1, 1 }
             };
 
-            // Применение операции эрозии
             Erosion(structuringElement);
-
-            // Применение операции дилатации
             Dilation(structuringElement);
         }
 
-
         private void Erosion(int[,] structuringElement)
         {
-            var stopwatch = new Stopwatch();
-            stopwatch.Start();
-
             Bitmap result = new Bitmap(processFrame.Width, processFrame.Height);
-
             Rectangle rect = new Rectangle(0, 0, processFrame.Width, processFrame.Height);
             BitmapData srcData = processFrame.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
             BitmapData dstData = result.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
-
             int srcStride = srcData.Stride;
             int dstStride = dstData.Stride;
-
             IntPtr srcScan0 = srcData.Scan0;
             IntPtr dstScan0 = dstData.Scan0;
 
             byte[] structuringElementValues = new byte[9];
+
             for (int i = 0; i < 9; i++)
-            {
                 structuringElementValues[i] = (byte)(structuringElement[i / 3, i % 3] * 255);
-            }
 
             unsafe
             {
@@ -420,162 +325,143 @@ namespace videoDetecter
 
             processFrame = (Bitmap)result.Clone();
             result.Dispose();
-
-            Debug.WriteLine("Erosion - " + stopwatch.ElapsedMilliseconds);
-            stopwatch.Stop();
         }
-
 
         private void Dilation(int[,] structuringElement)
-{
-    var stopwatch = new Stopwatch();
-    stopwatch.Start();
-
-    // Создание нового Bitmap для результата
-    Bitmap result = new Bitmap(processFrame.Width, processFrame.Height);
-
-    // Получение данных изображения в формате BitmapData
-    BitmapData srcData = processFrame.LockBits(new Rectangle(0, 0, processFrame.Width, processFrame.Height),
-        ImageLockMode.ReadOnly, processFrame.PixelFormat);
-
-    BitmapData destData = result.LockBits(new Rectangle(0, 0, result.Width, result.Height),
-        ImageLockMode.WriteOnly, result.PixelFormat);
-
-    // Размеры структурирующего элемента
-    int structWidth = structuringElement.GetLength(1);
-    int structHeight = structuringElement.GetLength(0);
-
-    // Получение формата пикселей
-    PixelFormat pixelFormat = processFrame.PixelFormat;
-
-    // Размеры одного пикселя в байтах
-    int pixelSize = Image.GetPixelFormatSize(pixelFormat) / 8;
-
-    // Позиция начала данных исходного изображения
-    IntPtr srcScan0 = srcData.Scan0;
-
-    // Позиция начала данных результирующего изображения
-    IntPtr destScan0 = destData.Scan0;
-
-    // Вычисление смещения для доступа к пикселям в данных изображений
-    int srcStride = srcData.Stride;
-    int destStride = destData.Stride;
-
-    // Итерация по пикселям изображения
-    for (int y = 1; y < processFrame.Height - 1; y++)
-    {
-        for (int x = 1; x < processFrame.Width - 1; x++)
         {
-            bool shouldDilate = false;
+            Bitmap result = new Bitmap(processFrame.Width, processFrame.Height);
 
-            for (int i = -1; i <= 1; i++)
+            BitmapData srcData = processFrame.LockBits(new Rectangle(0, 0, processFrame.Width, processFrame.Height),
+                ImageLockMode.ReadOnly, processFrame.PixelFormat);
+
+            BitmapData destData = result.LockBits(new Rectangle(0, 0, result.Width, result.Height),
+                ImageLockMode.WriteOnly, result.PixelFormat);
+
+            int structWidth = structuringElement.GetLength(1);
+            int structHeight = structuringElement.GetLength(0);
+            PixelFormat pixelFormat = processFrame.PixelFormat;
+            int pixelSize = Image.GetPixelFormatSize(pixelFormat) / 8;
+            IntPtr srcScan0 = srcData.Scan0;
+            IntPtr destScan0 = destData.Scan0;
+            int srcStride = srcData.Stride;
+            int destStride = destData.Stride;
+
+            for (int y = 1; y < processFrame.Height - 1; y++)
             {
-                for (int j = -1; j <= 1; j++)
+                for (int x = 1; x < processFrame.Width - 1; x++)
                 {
-                    // Получение значения пикселя структурирующего элемента
-                    int structElementValue = structuringElement[i + 1, j + 1];
+                    bool shouldDilate = false;
 
-                    // Вычисление позиции текущего пикселя в данных изображения
-                    int pixelX = x + j;
-                    int pixelY = y + i;
-
-                    // Проверка границ пикселя
-                    if (pixelX >= 0 && pixelX < processFrame.Width && pixelY >= 0 && pixelY < processFrame.Height)
+                    for (int i = -1; i <= 1; i++)
                     {
-                        // Получение адреса текущего пикселя в данных изображения
-                        IntPtr srcPixelAddress = srcScan0 + pixelY * srcStride + pixelX * pixelSize;
-
-                        // Получение цвета пикселя
-                        Color pixelColor = Color.FromArgb(Marshal.ReadInt32(srcPixelAddress));
-
-                        // Сравнение значения пикселя структурирующего элемента с белым цветом
-                        if (structElementValue == 1 && pixelColor.ToArgb() == Color.White.ToArgb())
+                        for (int j = -1; j <= 1; j++)
                         {
-                            shouldDilate = true;
-                            break;
+                            int structElementValue = structuringElement[i + 1, j + 1];
+                            int pixelX = x + j;
+                            int pixelY = y + i;
+
+                            if (pixelX >= 0 && pixelX < processFrame.Width && pixelY >= 0 && pixelY < processFrame.Height)
+                            {
+                                IntPtr srcPixelAddress = srcScan0 + pixelY * srcStride + pixelX * pixelSize;
+                                Color pixelColor = Color.FromArgb(Marshal.ReadInt32(srcPixelAddress));
+
+                                if (structElementValue == 1 && pixelColor.ToArgb() == Color.White.ToArgb())
+                                {
+                                    shouldDilate = true;
+                                    break;
+                                }
+                            }
                         }
+
+                        if (shouldDilate)
+                            break;
                     }
+
+                    IntPtr destPixelAddress = destScan0 + y * destStride + x * pixelSize;
+
+                    if (shouldDilate)
+                        Marshal.WriteInt32(destPixelAddress, Color.White.ToArgb());
+                    else
+                        Marshal.WriteInt32(destPixelAddress, Color.Black.ToArgb());
                 }
-
-                if (shouldDilate)
-                {
-                    break;
-                }
             }
 
-            // Вычисление адреса текущего пикселя в данных результирующего изображения
-            IntPtr destPixelAddress = destScan0 + y * destStride + x * pixelSize;
+            processFrame.UnlockBits(srcData);
+            result.UnlockBits(destData);
 
-            // Установка цвета пикселя в результирующем изображении
-            if (shouldDilate)
-            {
-                Marshal.WriteInt32(destPixelAddress, Color.White.ToArgb());
-            }
-            else
-            {
-                Marshal.WriteInt32(destPixelAddress, Color.Black.ToArgb());
-            }
+            processFrame = (Bitmap)result.Clone();
+            result.Dispose();
         }
-    }
-
-    // Освобождение данных изображений
-    processFrame.UnlockBits(srcData);
-    result.UnlockBits(destData);
-
-    // Клонирование результата и освобождение ресурсов
-    processFrame = (Bitmap)result.Clone();
-    result.Dispose();
-
-    stopwatch.Stop();
-    Debug.WriteLine("Dilation - " + stopwatch.ElapsedMilliseconds);
-}
-
 
         private void ConvertToBinary()
         {
-            var stopwatch = new Stopwatch();
-            stopwatch.Start();
+            Rectangle rect = new Rectangle(0, 0, processFrame.Width, processFrame.Height);
+            BitmapData processFrameData = processFrame.LockBits(rect, ImageLockMode.ReadWrite, processFrame.PixelFormat);
 
-            for (int y = 0; y < processFrame.Height; y++)
+            try
             {
-                for (int x = 0; x < processFrame.Width; x++)
-                {
-                    Color pixel = processFrame.GetPixel(x, y);
+                IntPtr processFramePtr = processFrameData.Scan0;
+                int bytesPerPixel = Image.GetPixelFormatSize(processFrame.PixelFormat) / 8;
+                int stride = processFrameData.Stride;
+                int width = processFrameData.Width;
+                int height = processFrameData.Height;
 
-                    if (pixel.GetBrightness() > 0.6)
-                        processFrame.SetPixel(x, y, Color.White);
-                    else
-                        processFrame.SetPixel(x, y, Color.Black);
+                int processFrameBytes = stride * height;
+                byte[] processFrameBuffer = new byte[processFrameBytes];
+
+                Marshal.Copy(processFramePtr, processFrameBuffer, 0, processFrameBytes);
+
+                double brightnessThreshold = 0.6;
+
+                for (int y = 0; y < height; y++)
+                {
+                    int currentLine = y * stride;
+                    int processFrameOffset = currentLine;
+
+                    for (int x = 0; x < width; x++)
+                    {
+                        int processFrameIndex = processFrameOffset + x * bytesPerPixel;
+
+                        double brightness = CalculateBrightness(processFrameBuffer[processFrameIndex + 2], processFrameBuffer[processFrameIndex + 1], processFrameBuffer[processFrameIndex]);
+
+                        byte newColor = (brightness > brightnessThreshold) ? (byte)255 : (byte)0;
+                        processFrameBuffer[processFrameIndex] = newColor;
+                        processFrameBuffer[processFrameIndex + 1] = newColor;
+                        processFrameBuffer[processFrameIndex + 2] = newColor;
+                    }
                 }
+
+                Marshal.Copy(processFrameBuffer, 0, processFramePtr, processFrameBytes);
             }
-            Debug.WriteLine("Binary - " + stopwatch.ElapsedMilliseconds);
-            stopwatch.Stop();
+            finally
+            {
+                processFrame.UnlockBits(processFrameData);
+            }
+        }
+
+        private double CalculateBrightness(byte r, byte g, byte b)
+        {
+            return (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
         }
 
         private void DrawMovingObjectContours(Bitmap diffImage)
         {
-            var stopwatch = new Stopwatch();
-            stopwatch.Start();
             Graphics g = Graphics.FromImage(currentFrame);
             //Graphics g = Graphics.FromImage(processFrame); // отрисовка прямоугольников на ч/б кадре
             Pen redPen = new Pen(Color.Red, 2);
-
             List<List<Point>> contours = FindContours(diffImage);
             var minSize = 20;
             minSize = (int)(minSize * (2 - scaleRatio));
+
             foreach (List<Point> contour in contours)
             {
                 Rectangle rect = GetBoundingBox(contour);
 
                 if (rect.Width > minSize / 2 && rect.Height > minSize)
-                {
                     g.DrawRectangle(redPen, rect);
-                }
             }
 
             redPen.Dispose();
-            Debug.WriteLine("Drawing - " + stopwatch.ElapsedMilliseconds);
-            stopwatch.Stop();
         }
 
         private List<List<Point>> FindContours(Bitmap image)
@@ -612,12 +498,10 @@ namespace videoDetecter
                 {
                     visited[currentPoint.X, currentPoint.Y] = true;
                     contour.Add(currentPoint);
-
                     List<Point> neighbors = GetNeighbors(currentPoint);
+
                     foreach (Point neighbor in neighbors)
-                    {
                         stack.Push(neighbor);
-                    }
                 }
             }
 
@@ -627,14 +511,10 @@ namespace videoDetecter
         private bool IsValidPoint(Bitmap image, bool[,] visited, Point point)
         {
             if (point.X < 0 || point.X >= image.Width || point.Y < 0 || point.Y >= image.Height)
-            {
                 return false;
-            }
 
             if (visited[point.X, point.Y] || !IsObjectPixel(image.GetPixel(point.X, point.Y)))
-            {
                 return false;
-            }
 
             return true;
         }
@@ -686,23 +566,16 @@ namespace videoDetecter
             int targetHeight;
             double scalePercentage;
 
-            // Определение уровня сжатия в зависимости от разрешения Bitmap
             if (sourceBitmap.Width >= 1920 || sourceBitmap.Height >= 1080)
-            {
-                scalePercentage = 0.2; // 80% сжатие для высокого разрешения
-            }
+                scalePercentage = 0.2;
             else if (sourceBitmap.Width >= 1280 || sourceBitmap.Height >= 720)
-            {
-                scalePercentage = 0.3; // 70% сжатие для среднего разрешения
-            }
+                scalePercentage = 0.5;
             else
-            {
-                scalePercentage = 0.4; // 60% сжатие для низкого разрешения
-            }
+                scalePercentage = 1;
+
             scaleRatio = scalePercentage;
             targetWidth = (int)(sourceBitmap.Width * scalePercentage);
             targetHeight = (int)(sourceBitmap.Height * scalePercentage);
-
             Bitmap scaledBitmap = new Bitmap(targetWidth, targetHeight);
 
             using (Graphics graphics = Graphics.FromImage(scaledBitmap))
