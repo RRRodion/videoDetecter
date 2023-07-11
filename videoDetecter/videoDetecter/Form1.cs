@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace videoDetecter
@@ -57,20 +58,6 @@ namespace videoDetecter
             }
         }
 
-        private void ConvertToGray()
-        {
-            for (int y = 0; y < processFrame.Height; y++)
-            {
-                for (int x = 0; x < processFrame.Width; x++)
-                {
-                    Color color = processFrame.GetPixel(x, y);
-                    int grayValue = (int)(color.R * 0.299 + color.G * 0.587 + color.B * 0.114);
-                    Color grayColor = Color.FromArgb(grayValue, grayValue, grayValue);
-                    processFrame.SetPixel(x, y, grayColor);
-                }
-            }
-        }
-
         private void ComputeFrameDifference()
         {
             Rectangle rect = new Rectangle(0, 0, processFrame.Width, processFrame.Height);
@@ -119,7 +106,7 @@ namespace videoDetecter
                         int diffB = Math.Abs(currentB - previousB);
                         int diffTotal = (diffR + diffG + diffB) / 3;
 
-                        byte newColor = (diffTotal > 2) ? (byte)255 : (byte)0;
+                        byte newColor = (diffTotal > 3) ? (byte)255 : (byte)0;
                         processFrameBuffer[processFrameIndex] = newColor;
                         processFrameBuffer[processFrameIndex + 1] = newColor;
                         processFrameBuffer[processFrameIndex + 2] = newColor;
@@ -152,7 +139,6 @@ namespace videoDetecter
                     processFrame = m.Bitmap;
                     currentFrame = ScaleBitmap(currentFrame);
                     processFrame = (Bitmap)currentFrame.Clone();
-                    ConvertToGray();
 
                     if (previousFrame == null)
                     {
@@ -230,9 +216,9 @@ namespace videoDetecter
         {
             int[,] structuringElement = new int[,]
             {
-                { 1, 1, 1 },
-                { 1, 1, 1 },
-                { 1, 1, 1 }
+        { 1, 1, 1 },
+        { 1, 1, 1 },
+        { 1, 1, 1 }
             };
 
             Dilation(structuringElement);
@@ -243,9 +229,9 @@ namespace videoDetecter
         {
             int[,] structuringElement = new int[,]
             {
-                { 1, 1, 1 },
-                { 1, 1, 1 },
-                { 1, 1, 1 }
+        { 1, 1, 1 },
+        { 1, 1, 1 },
+        { 1, 1, 1 }
             };
 
             Erosion(structuringElement);
@@ -284,6 +270,9 @@ namespace videoDetecter
 
                         for (int i = -1; i <= 1; i++)
                         {
+                            if (!shouldErode)
+                                break;
+
                             for (int j = -1; j <= 1; j++)
                             {
                                 byte* srcPixel = srcRow + (x + j) * 4;
@@ -295,9 +284,6 @@ namespace videoDetecter
                                     break;
                                 }
                             }
-
-                            if (!shouldErode)
-                                break;
                         }
 
                         byte* dstPixel = dstRow + x * 4;
@@ -323,8 +309,8 @@ namespace videoDetecter
             processFrame.UnlockBits(srcData);
             result.UnlockBits(dstData);
 
-            processFrame = (Bitmap)result.Clone();
-            result.Dispose();
+            processFrame.Dispose();
+            processFrame = result;
         }
 
         private void Dilation(int[,] structuringElement)
@@ -346,43 +332,39 @@ namespace videoDetecter
             int srcStride = srcData.Stride;
             int destStride = destData.Stride;
 
-            for (int y = 1; y < processFrame.Height - 1; y++)
-            {
-                for (int x = 1; x < processFrame.Width - 1; x++)
-                {
-                    bool shouldDilate = false;
+            int halfStructWidth = structWidth / 2;
+            int halfStructHeight = structHeight / 2;
 
-                    for (int i = -1; i <= 1; i++)
+            for (int y = halfStructHeight; y < processFrame.Height - halfStructHeight; y++)
+            {
+                for (int x = halfStructWidth; x < processFrame.Width - halfStructWidth; x++)
+                {
+                    int maxR = 0;
+                    int maxG = 0;
+                    int maxB = 0;
+
+                    for (int i = -halfStructHeight; i <= halfStructHeight; i++)
                     {
-                        for (int j = -1; j <= 1; j++)
+                        for (int j = -halfStructWidth; j <= halfStructWidth; j++)
                         {
-                            int structElementValue = structuringElement[i + 1, j + 1];
+                            int structElementValue = structuringElement[i + halfStructHeight, j + halfStructWidth];
                             int pixelX = x + j;
                             int pixelY = y + i;
 
-                            if (pixelX >= 0 && pixelX < processFrame.Width && pixelY >= 0 && pixelY < processFrame.Height)
-                            {
-                                IntPtr srcPixelAddress = srcScan0 + pixelY * srcStride + pixelX * pixelSize;
-                                Color pixelColor = Color.FromArgb(Marshal.ReadInt32(srcPixelAddress));
+                            IntPtr srcPixelAddress = srcScan0 + pixelY * srcStride + pixelX * pixelSize;
+                            Color pixelColor = Color.FromArgb(Marshal.ReadInt32(srcPixelAddress));
 
-                                if (structElementValue == 1 && pixelColor.ToArgb() == Color.White.ToArgb())
-                                {
-                                    shouldDilate = true;
-                                    break;
-                                }
+                            if (structElementValue == 1)
+                            {
+                                maxR = Math.Max(maxR, pixelColor.R);
+                                maxG = Math.Max(maxG, pixelColor.G);
+                                maxB = Math.Max(maxB, pixelColor.B);
                             }
                         }
-
-                        if (shouldDilate)
-                            break;
                     }
 
                     IntPtr destPixelAddress = destScan0 + y * destStride + x * pixelSize;
-
-                    if (shouldDilate)
-                        Marshal.WriteInt32(destPixelAddress, Color.White.ToArgb());
-                    else
-                        Marshal.WriteInt32(destPixelAddress, Color.Black.ToArgb());
+                    Marshal.WriteInt32(destPixelAddress, Color.FromArgb(maxR, maxG, maxB).ToArgb());
                 }
             }
 
@@ -438,6 +420,7 @@ namespace videoDetecter
                 processFrame.UnlockBits(processFrameData);
             }
         }
+
 
         private double CalculateBrightness(byte r, byte g, byte b)
         {
